@@ -8,6 +8,8 @@ class PubspecConfig {
   String? _className;
   String? _mainLocale;
   String? _arbDir;
+  String? _projectName;
+  List<String>? _featurePackages;
   String? _outputDir;
   bool? _useDeferredLoading;
   LocalizelyConfig? _localizelyConfig;
@@ -43,6 +45,12 @@ class PubspecConfig {
     _arbDir = flutterIntlConfig['arb_dir'] is String
         ? flutterIntlConfig['arb_dir']
         : null;
+    _projectName = flutterIntlConfig['project_name'] is String
+        ? flutterIntlConfig['project_name']
+        : null;    
+    _featurePackages = flutterIntlConfig['feature_packages'] is yaml.YamlList
+        ? List<String>.from(flutterIntlConfig['feature_packages'])
+        : null;  
     _outputDir = flutterIntlConfig['output_dir'] is String
         ? flutterIntlConfig['output_dir']
         : null;
@@ -60,6 +68,10 @@ class PubspecConfig {
   String? get mainLocale => _mainLocale;
 
   String? get arbDir => _arbDir;
+
+  String? get projectName => _projectName;
+
+  List<String>? get featurePackages => _featurePackages;
 
   String? get outputDir => _outputDir;
 

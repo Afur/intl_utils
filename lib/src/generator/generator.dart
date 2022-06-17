@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import '../config/pubspec_config.dart';
 import '../constants/constants.dart';
@@ -14,6 +15,8 @@ class Generator {
   late String _className;
   late String _mainLocale;
   late String _arbDir;
+  late String _projectName;
+  late List<String> _featurePackages;
   late String _outputDir;
   late bool _useDeferredLoading;
   late bool _otaEnabled;
@@ -52,6 +55,18 @@ class Generator {
       }
     }
 
+    _projectName = "";
+    if (pubspecConfig.projectName != null) {
+      _projectName = pubspecConfig.projectName!;
+    }
+
+    _featurePackages = [];
+    if (pubspecConfig.featurePackages != null) {
+      for (var featurePackage in pubspecConfig.featurePackages!) {
+        _featurePackages.add(featurePackage);
+      }
+    }
+
     _outputDir = defaultOutputDir;
     if (pubspecConfig.outputDir != null) {
       if (isValidPath(pubspecConfig.outputDir!)) {
@@ -71,20 +86,89 @@ class Generator {
 
   /// Generates localization files.
   Future<void> generateAsync() async {
+    if (_projectName.isNotEmpty && _featurePackages.isNotEmpty) {
+      await _generateDartFilesFromFeaturePackages();
+      return;
+    }
+
     await _updateL10nDir();
     await _updateGeneratedDir();
     await _generateDartFiles();
   }
 
-  Future<void> _updateL10nDir() async {
-    var mainArbFile = getArbFileForLocale(_mainLocale, _arbDir);
-    if (mainArbFile == null) {
-      await createArbFileForLocale(_mainLocale, _arbDir);
+  Future<void> _generateDartFilesFromFeaturePackages() async {
+    _projectName = "parkm";
+    _featurePackages = ["authentication", "app_parkm"];
+    Directory? parentDir;
+
+    // We want to find the project directory
+    for (int i = 0; i < 5; i++) {
+      var parentDirectory = Directory.current.parent;
+      if (parentDirectory.path.endsWith(_projectName)) {
+        parentDir = parentDirectory;
+        break;
+      }
+    }
+
+    final List<Label> labels = [];
+
+    if (parentDir != null) {
+      final fileList = parentDir.listSync(recursive: true);
+
+      for (var featurePackageName in _featurePackages) {
+        final featurePackageDir = fileList
+            .firstWhere((file) => file.path.endsWith(featurePackageName));
+
+        var foundLabels =
+            _getLabelsFromArbFile(customPath: featurePackageDir.path);
+
+        // override labels duplicates from next feature packages
+        labels.removeWhere(
+          (label) =>
+              foundLabels.any((foundLabel) => foundLabel.name == label.name),
+        );
+
+        labels.addAll(foundLabels);
+      }
+
+      var foundMainLabels = _getLabelsFromArbFile();
+
+      // override labels duplicates from main packages
+      labels.removeWhere(
+        (label) =>
+            foundMainLabels.any((foundLabel) => foundLabel.name == label.name),
+      );
+
+      labels.addAll(foundMainLabels);
+
+      var locales = _orderLocales(getLocales(_arbDir));
+      var content =
+          generateL10nDartFileContent(_className, labels, locales, _otaEnabled);
+      var formattedContent = formatDartContent(content, 'l10n.dart');
+
+      await updateL10nDartFile(formattedContent, _outputDir);
+
+      var intlDir = getIntlDirectory(_outputDir);
+      if (intlDir == null) {
+        await createIntlDirectory(_outputDir);
+      }
+
+      await removeUnusedGeneratedDartFiles(locales, _outputDir);
+      await _generateDartFiles();
     }
   }
 
-  Future<void> _updateGeneratedDir() async {
-    var labels = _getLabelsFromMainArbFile();
+  Future<void> _updateL10nDir({String? customPath}) async {
+    var mainArbFile =
+        getArbFileForLocale(_mainLocale, _arbDir, customPath: customPath);
+    if (mainArbFile == null) {
+      await createArbFileForLocale(_mainLocale, _arbDir,
+          customPath: customPath);
+    }
+  }
+
+  Future<void> _updateGeneratedDir({String? customPath}) async {
+    var labels = _getLabelsFromArbFile(customPath: customPath);
     var locales = _orderLocales(getLocales(_arbDir));
     var content =
         generateL10nDartFileContent(_className, labels, locales, _otaEnabled);
@@ -100,8 +184,9 @@ class Generator {
     await removeUnusedGeneratedDartFiles(locales, _outputDir);
   }
 
-  List<Label> _getLabelsFromMainArbFile() {
-    var mainArbFile = getArbFileForLocale(_mainLocale, _arbDir);
+  List<Label> _getLabelsFromArbFile({String? customPath}) {
+    var mainArbFile =
+        getArbFileForLocale(_mainLocale, _arbDir, customPath: customPath);
     if (mainArbFile == null) {
       throw GeneratorException(
           "Can't find ARB file for the '$_mainLocale' locale.");
