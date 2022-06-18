@@ -1,26 +1,31 @@
+import 'package:intl_utils/src/extensions/string_extensions.dart';
+
 import '../utils/utils.dart';
 import 'label.dart';
 
 String generateL10nDartFileContent(
     String className, List<Label> labels, List<String> locales,
-    [bool otaEnabled = false]) {
+    {List<String> packages = const [],
+    List<String> duplicates = const [],
+    bool otaEnabled = false}) {
   return """
 // GENERATED CODE - DO NOT MODIFY BY HAND
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';${otaEnabled ? '\n${_generateLocalizelySdkImport()}' : ''}
 import 'intl/messages_all.dart';
+${packages.isNotEmpty ? _generatePackagesImports(packages) : ''}
 
 // **************************************************************************
 // Generator: Flutter Intl IDE plugin
 // Made by Localizely
+// Modified by Artur Teodorowicz 
 // **************************************************************************
 
 // ignore_for_file: non_constant_identifier_names, lines_longer_than_80_chars
 // ignore_for_file: join_return_with_assignment, prefer_final_in_for_each
 // ignore_for_file: avoid_redundant_argument_values, avoid_escaping_inner_quotes
 
-class $className {
-  $className();
+class $className ${_generateExtendedClassNames(packages)} {
 
   static $className? _current;
 
@@ -54,7 +59,7 @@ class $className {
     return Localizations.of<$className>(context, $className);
   }
 ${otaEnabled ? '\n${_generateMetadata(labels)}\n' : ''}
-${labels.map((label) => label.generateDartGetter()).join("\n\n")}
+${labels.map((label) => label.generateDartGetter(isDuplicated: duplicates.any((duplicate) => duplicate == label.name))).join("\n\n")}
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<$className> {
@@ -102,6 +107,19 @@ String _generateLocale(String locale) {
 
 String _generateLocalizelySdkImport() {
   return "import 'package:localizely_sdk/localizely_sdk.dart';";
+}
+
+String _generatePackagesImports(List<String> packages) {
+  return packages
+      .map((package) => "import 'package:$package/generated/l10n.dart';")
+      .join("\n");
+}
+
+String _generateExtendedClassNames(List<String> packages) {
+  if (packages.isEmpty) return "";
+
+  final classes = packages.map((package) => " ${package.capitalizePackageName()}S");
+  return "extends" + classes.first + (classes.length > 1 ? " with" + classes.skip(1).join(" with") : "");
 }
 
 String _generateMetadataSetter() {

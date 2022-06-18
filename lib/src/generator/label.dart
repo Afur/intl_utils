@@ -285,7 +285,7 @@ class Label {
       {this.type, this.description, this.placeholders});
 
   /// Generates label getter.
-  String generateDartGetter() {
+  String generateDartGetter({bool isDuplicated = false}) {
     try {
       var content = _escape(this.content);
       var description = _escape(this.description ?? '');
@@ -308,6 +308,7 @@ class Label {
           {
             return [
               _generateDartDoc(),
+              '  ${isDuplicated ? '@override' : ''}',
               '  String get $name {',
               '    return Intl.message(',
               '      \'$content\',',
@@ -323,6 +324,7 @@ class Label {
           {
             return [
               _generateDartDoc(),
+              '  ${isDuplicated ? '@override' : ''}',
               '  String $name(${_generateDartMethodParameters(args)}) {',
               ..._generateFormattingLogic(args),
               '    return Intl.message(',
@@ -340,6 +342,7 @@ class Label {
 
             return [
               _generateDartDoc(),
+              '  ${isDuplicated ? '@override' : ''}',
               '  String $name(${_generateDartMethodParameters(args)}) {',
               ..._generateFormattingLogic(args),
               '    return Intl.plural(',
@@ -358,6 +361,7 @@ class Label {
 
             return [
               _generateDartDoc(),
+              '  ${isDuplicated ? '@override' : ''}',
               '  String $name(${_generateDartMethodParameters(args)}) {',
               ..._generateFormattingLogic(args),
               '    return Intl.gender(',
@@ -378,6 +382,7 @@ class Label {
 
             return [
               _generateDartDoc(),
+              '  ${isDuplicated ? '@override' : ''}',
               '  String $name(${_generateDartMethodParameters(args)}) {',
               ..._generateFormattingLogic(args),
               '    return Intl.select(',

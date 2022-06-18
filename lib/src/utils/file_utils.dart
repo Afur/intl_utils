@@ -1,238 +1,186 @@
-import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
-import '../config/pubspec_config.dart';
-import '../constants/constants.dart';
-import '../utils/file_utils.dart';
-import '../utils/utils.dart';
-import 'generator_exception.dart';
-import 'intl_translation_helper.dart';
-import 'label.dart';
-import 'templates.dart';
+import 'package:path/path.dart' as path;
 
-/// The generator of localization files.
-class Generator {
-  late String _className;
-  late String _mainLocale;
-  late String _arbDir;
-  late String _projectName;
-  late List<String> _featurePackages;
-  late String _outputDir;
-  late bool _useDeferredLoading;
-  late bool _otaEnabled;
+/// Gets the root directory path.
+String getRootDirectoryPath() => getRootDirectory().path;
 
-  /// Creates a new generator with configuration from the 'pubspec.yaml' file.
-  Generator() {
-    var pubspecConfig = PubspecConfig();
+/// Gets the root directory.
+///
+/// Note: The current working directory is assumed to be the root of a project.
+Directory getRootDirectory() => Directory.current;
 
-    _className = defaultClassName;
-    if (pubspecConfig.className != null) {
-      if (isValidClassName(pubspecConfig.className!)) {
-        _className = pubspecConfig.className!;
-      } else {
-        warning(
-            "Config parameter 'class_name' requires valid 'UpperCamelCase' value.");
-      }
-    }
+/// Gets the pubspec file.
+File? getPubspecFile({String? customPath}) {
+  var rootDirPath = customPath ?? getRootDirectoryPath();
+  var pubspecFilePath = path.join(rootDirPath, 'pubspec.yaml');
+  var pubspecFile = File(pubspecFilePath);
 
-    _mainLocale = defaultMainLocale;
-    if (pubspecConfig.mainLocale != null) {
-      if (isValidLocale(pubspecConfig.mainLocale!)) {
-        _mainLocale = pubspecConfig.mainLocale!;
-      } else {
-        warning(
-            "Config parameter 'main_locale' requires value consisted of language code and optional script and country codes separated with underscore (e.g. 'en', 'en_GB', 'zh_Hans', 'zh_Hans_CN').");
-      }
-    }
+  return pubspecFile.existsSync() ? pubspecFile : null;
+}
 
-    _arbDir = defaultArbDir;
-    if (pubspecConfig.arbDir != null) {
-      if (isValidPath(pubspecConfig.arbDir!)) {
-        _arbDir = pubspecConfig.arbDir!;
-      } else {
-        warning(
-            "Config parameter 'arb_dir' requires valid path value (e.g. 'lib', 'res/', 'lib\\l10n').");
-      }
-    }
+/// Gets arb file for the given locale.
+File? getArbFileForLocale(String locale, String arbDir, {String? customPath}) {
+  var rootDirPath = customPath ?? getRootDirectoryPath();
+  var arbFilePath = path.join(rootDirPath, arbDir, 'intl_$locale.arb');
+  var arbFile = File(arbFilePath);
 
-    _projectName = "";
-    if (pubspecConfig.projectName != null) {
-      _projectName = pubspecConfig.projectName!;
-    }
+  return arbFile.existsSync() ? arbFile : null;
+}
 
-    _featurePackages = [];
-    if (pubspecConfig.featurePackages != null) {
-      for (var featurePackage in pubspecConfig.featurePackages!) {
-        _featurePackages.add(featurePackage);
-      }
-    }
+/// Creates arb file for the given locale.
+Future<File> createArbFileForLocale(String locale, String arbDir,
+    {String? customPath}) async {
+  var rootDirPath = customPath ?? getRootDirectoryPath();
+  var arbFilePath = path.join(rootDirPath, arbDir, 'intl_$locale.arb');
+  var arbFile = File(arbFilePath);
 
-    _outputDir = defaultOutputDir;
-    if (pubspecConfig.outputDir != null) {
-      if (isValidPath(pubspecConfig.outputDir!)) {
-        _outputDir = pubspecConfig.outputDir!;
-      } else {
-        warning(
-            "Config parameter 'output_dir' requires valid path value (e.g. 'lib', 'lib\\generated').");
-      }
-    }
+  await arbFile.create(recursive: true);
+  await arbFile.writeAsString('{}');
 
-    _useDeferredLoading =
-        pubspecConfig.useDeferredLoading ?? defaultUseDeferredLoading;
+  return arbFile;
+}
 
-    _otaEnabled =
-        pubspecConfig.localizelyConfig?.otaEnabled ?? defaultOtaEnabled;
+/// Gets all arb files in the project.
+List<FileSystemEntity> getArbFiles(String arbDir, {String? customPath}) {
+  var l10nDirPath = customPath != null
+      ? path.join(customPath, arbDir)
+      : path.join(getRootDirectoryPath(), arbDir);
+
+  var arbFiles = Directory(l10nDirPath)
+      .listSync()
+      .where((file) =>
+          path.basename(file.path).startsWith('intl_') &&
+          path.basename(file.path).endsWith('.arb'))
+      .toList();
+
+  // arb files order is not the same on all operating systems (e.g. win, mac)
+  arbFiles.sort((a, b) => a.path.compareTo(b.path));
+
+  return arbFiles;
+}
+
+/// Gets all locales in the project.
+List<String> getLocales(String arbDir, {String? customPath}) {
+  var locales = getArbFiles(arbDir, customPath: customPath)
+      .map((file) => path.basename(file.path))
+      .map((fileName) =>
+          fileName.substring('intl_'.length, fileName.length - '.arb'.length))
+      .toList();
+
+  return locales;
+}
+
+/// Updates arb file content.
+Future<void> updateArbFile(
+  String fileName,
+  Uint8List bytes,
+  String arbDir,
+  {String? customPath}
+) async {
+  var rootDirPath = customPath ?? getRootDirectoryPath();
+  var arbFilePath = path.join(rootDirPath, arbDir, fileName);
+  var arbFile = File(arbFilePath);
+
+  if (!arbFile.existsSync()) {
+    await arbFile.create();
   }
 
-  /// Generates localization files.
-  Future<void> generateAsync() async {
-    if (_projectName.isNotEmpty && _featurePackages.isNotEmpty) {
-      await _generateDartFilesFromFeaturePackages();
-      return;
-    }
+  await arbFile.writeAsBytes(bytes);
+}
 
-    await _updateL10nDir();
-    await _updateGeneratedDir();
-    await _generateDartFiles();
+/// Gets l10n Dart file path.
+String getL10nDartFilePath(String outputDir, {String? customPath}) =>
+    path.join(customPath ?? getRootDirectoryPath(), outputDir, 'l10n.dart');
+
+/// Updates l10n Dart file.
+Future<void> updateL10nDartFile(String content, String outputDir, {String? customPath}) async {
+  var l10nDartFilePath = getL10nDartFilePath(outputDir, customPath: customPath);
+  var l10nDartFile = File(l10nDartFilePath);
+
+  if (!l10nDartFile.existsSync()) {
+    await l10nDartFile.create(recursive: true);
   }
 
-  Future<void> _generateDartFilesFromFeaturePackages() async {
-    Directory? parentDir;
+  await l10nDartFile.writeAsString(content);
+}
 
-    // We want to find the project directory
-    for (int i = 0; i < 5; i++) {
-      var parentDirectory = Directory.current.parent;
-      if (parentDirectory.path.endsWith(_projectName)) {
-        parentDir = parentDirectory;
-        break;
-      }
-    }
+/// Gets intl directory path.
+String getIntlDirectoryPath(String outputDir, {String? customPath}) =>
+    path.join(customPath ?? getRootDirectoryPath(), outputDir, 'intl');
 
-    final List<Label> labels = [];
+/// Gets intl directory.
+Directory? getIntlDirectory(String outputDir, {String? customPath}) {
+  var intlDirPath = getIntlDirectoryPath(outputDir, customPath: customPath);
+  var intlDir = Directory(intlDirPath);
 
-    if (parentDir != null) {
-      final fileList = parentDir.listSync(recursive: true);
+  return intlDir.existsSync() ? intlDir : null;
+}
 
-      for (var featurePackageName in _featurePackages) {
-        final featurePackageDir = fileList
-            .firstWhere((file) => file.path.endsWith(featurePackageName));
+/// Creates intl directory.
+Future<Directory> createIntlDirectory(String outputDir, {String? customPath}) async {
+  var intlDirPath = getIntlDirectoryPath(outputDir, customPath: customPath);
+  var intlDir = Directory(intlDirPath);
 
-        var foundLabels =
-            _getLabelsFromArbFile(customPath: featurePackageDir.path);
-
-        // override labels duplicates from next feature packages
-        labels.removeWhere(
-          (label) =>
-              foundLabels.any((foundLabel) => foundLabel.name == label.name),
-        );
-
-        labels.addAll(foundLabels);
-      }
-
-      var foundMainLabels = _getLabelsFromArbFile();
-
-      // override labels duplicates from main packages
-      labels.removeWhere(
-        (label) =>
-            foundMainLabels.any((foundLabel) => foundLabel.name == label.name),
-      );
-
-      labels.addAll(foundMainLabels);
-
-      var locales = _orderLocales(getLocales(_arbDir));
-      var content =
-          generateL10nDartFileContent(_className, labels, locales, _otaEnabled);
-      var formattedContent = formatDartContent(content, 'l10n.dart');
-
-      await updateL10nDartFile(formattedContent, _outputDir);
-
-      var intlDir = getIntlDirectory(_outputDir);
-      if (intlDir == null) {
-        await createIntlDirectory(_outputDir);
-      }
-
-      await removeUnusedGeneratedDartFiles(locales, _outputDir);
-      await _generateDartFiles();
-    }
+  if (!intlDir.existsSync()) {
+    await intlDir.create(recursive: true);
   }
 
-  Future<void> _updateL10nDir({String? customPath}) async {
-    var mainArbFile =
-        getArbFileForLocale(_mainLocale, _arbDir, customPath: customPath);
-    if (mainArbFile == null) {
-      await createArbFileForLocale(_mainLocale, _arbDir,
-          customPath: customPath);
+  return intlDir;
+}
+
+/// Removes unused generated Dart files.
+Future<void> removeUnusedGeneratedDartFiles(
+    List<String> locales, String outputDir, {String? customPath}) async {
+  var intlDir = getIntlDirectory(outputDir, customPath: customPath);
+  if (intlDir == null) {
+    return;
+  }
+
+  var files = intlDir.listSync();
+  for (var file in files) {
+    var basename = path.basename(file.path);
+    var substring = basename.substring(
+        'messages_'.length, basename.length - '.dart'.length);
+
+    if (basename.startsWith('messages_') &&
+        basename.endsWith('.dart') &&
+        !['all', ...locales].contains(substring)) {
+      await file.delete(recursive: true);
     }
   }
+}
 
-  Future<void> _updateGeneratedDir({String? customPath}) async {
-    var labels = _getLabelsFromArbFile(customPath: customPath);
-    var locales = _orderLocales(getLocales(_arbDir));
-    var content =
-        generateL10nDartFileContent(_className, labels, locales, _otaEnabled);
-    var formattedContent = formatDartContent(content, 'l10n.dart');
-
-    await updateL10nDartFile(formattedContent, _outputDir);
-
-    var intlDir = getIntlDirectory(_outputDir);
-    if (intlDir == null) {
-      await createIntlDirectory(_outputDir);
-    }
-
-    await removeUnusedGeneratedDartFiles(locales, _outputDir);
+/// Gets Localizely credentials file path.
+String? getLocalizelyCredentialsFilePath() {
+  var userHome = getUserHome();
+  if (userHome == null) {
+    return null;
   }
 
-  List<Label> _getLabelsFromArbFile({String? customPath}) {
-    var mainArbFile =
-        getArbFileForLocale(_mainLocale, _arbDir, customPath: customPath);
-    if (mainArbFile == null) {
-      throw GeneratorException(
-          "Can't find ARB file for the '$_mainLocale' locale.");
-    }
+  return path.join(userHome, '.localizely', 'credentials.yaml');
+}
 
-    var content = mainArbFile.readAsStringSync();
-    var decodedContent = json.decode(content) as Map<String, dynamic>;
-
-    var labels =
-        decodedContent.keys.where((key) => !key.startsWith('@')).map((key) {
-      var name = key;
-      var content = decodedContent[key];
-
-      var meta = decodedContent['@$key'] ?? {};
-      var type = meta['type'];
-      var description = meta['description'];
-      var placeholders = meta['placeholders'] != null
-          ? (meta['placeholders'] as Map<String, dynamic>)
-              .keys
-              .map((placeholder) => Placeholder(
-                  key, placeholder, meta['placeholders'][placeholder]))
-              .toList()
-          : null;
-
-      return Label(name, content,
-          type: type, description: description, placeholders: placeholders);
-    }).toList();
-
-    return labels;
+/// Gets Localizely credentials file.
+File? getLocalizelyCredentialsFile() {
+  var credentialsFilePath = getLocalizelyCredentialsFilePath();
+  if (credentialsFilePath == null) {
+    return null;
   }
 
-  List<String> _orderLocales(List<String> locales) {
-    var index = locales.indexOf(_mainLocale);
-    return index != -1
-        ? [
-            locales.elementAt(index),
-            ...locales.sublist(0, index),
-            ...locales.sublist(index + 1)
-          ]
-        : locales;
-  }
+  var credentialsFile = File(credentialsFilePath);
 
-  Future<void> _generateDartFiles() async {
-    var outputDir = getIntlDirectoryPath(_outputDir);
-    var dartFiles = [getL10nDartFilePath(_outputDir)];
-    var arbFiles = getArbFiles(_arbDir).map((file) => file.path).toList();
+  return credentialsFile.existsSync() ? credentialsFile : null;
+}
 
-    var helper = IntlTranslationHelper(_useDeferredLoading);
-    helper.generateFromArb(outputDir, dartFiles, arbFiles);
+/// Gets the user home directory path.
+String? getUserHome() {
+  if (Platform.isMacOS || Platform.isLinux) {
+    return Platform.environment['HOME'];
+  } else if (Platform.isWindows) {
+    return Platform.environment['USERPROFILE'];
+  } else {
+    return null;
   }
 }

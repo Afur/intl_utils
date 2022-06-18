@@ -1,12 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:intl_utils/src/extensions/string_extensions.dart';
+
 import '../config/pubspec_config.dart';
 import '../constants/constants.dart';
 import '../utils/file_utils.dart';
 import '../utils/utils.dart';
 import 'generator_exception.dart';
 import 'intl_translation_helper.dart';
+import 'package:path/path.dart';
 import 'label.dart';
 import 'templates.dart';
 
@@ -97,8 +100,6 @@ class Generator {
   }
 
   Future<void> _generateDartFilesFromFeaturePackages() async {
-    _projectName = "parkm";
-    _featurePackages = ["authentication", "app_parkm"];
     Directory? parentDir;
 
     // We want to find the project directory
@@ -111,6 +112,8 @@ class Generator {
     }
 
     final List<Label> labels = [];
+
+    var locales = _orderLocales(getLocales(_arbDir));
 
     if (parentDir != null) {
       final fileList = parentDir.listSync(recursive: true);
@@ -129,9 +132,25 @@ class Generator {
         );
 
         labels.addAll(foundLabels);
+
+        var content = generateL10nDartFileContent(
+            featurePackageName.capitalizePackageName() + "S", labels, locales,
+            otaEnabled: _otaEnabled);
+        var formattedContent = formatDartContent(content, 'l10n.dart');
+
+        await updateL10nDartFile(formattedContent, _outputDir,
+            customPath: join(featurePackageDir.path));
       }
 
       var foundMainLabels = _getLabelsFromArbFile();
+
+      var duplicates = labels
+          .where(
+            (label) => foundMainLabels
+                .any((foundLabel) => foundLabel.name == label.name),
+          )
+          .map((label) => label.name)
+          .toList();
 
       // override labels duplicates from main packages
       labels.removeWhere(
@@ -141,9 +160,14 @@ class Generator {
 
       labels.addAll(foundMainLabels);
 
-      var locales = _orderLocales(getLocales(_arbDir));
-      var content =
-          generateL10nDartFileContent(_className, labels, locales, _otaEnabled);
+      var content = generateL10nDartFileContent(
+        _className,
+        labels,
+        locales,
+        packages: _featurePackages,
+        duplicates: duplicates,
+        otaEnabled: _otaEnabled,
+      );
       var formattedContent = formatDartContent(content, 'l10n.dart');
 
       await updateL10nDartFile(formattedContent, _outputDir);
@@ -158,6 +182,26 @@ class Generator {
     }
   }
 
+  Future<void> _updateDartFiles(
+    List<Label> labels,
+    List<String> locales,
+  ) async {
+    var locales = _orderLocales(getLocales(_arbDir));
+    var content = generateL10nDartFileContent(
+        _className, _getLabelsFromArbFile(), locales,
+        otaEnabled: _otaEnabled);
+    var formattedContent = formatDartContent(content, 'l10n.dart');
+
+    await updateL10nDartFile(formattedContent, _outputDir);
+
+    var intlDir = getIntlDirectory(_outputDir);
+    if (intlDir == null) {
+      await createIntlDirectory(_outputDir);
+    }
+
+    await removeUnusedGeneratedDartFiles(locales, _outputDir);
+  }
+
   Future<void> _updateL10nDir({String? customPath}) async {
     var mainArbFile =
         getArbFileForLocale(_mainLocale, _arbDir, customPath: customPath);
@@ -170,8 +214,8 @@ class Generator {
   Future<void> _updateGeneratedDir({String? customPath}) async {
     var labels = _getLabelsFromArbFile(customPath: customPath);
     var locales = _orderLocales(getLocales(_arbDir));
-    var content =
-        generateL10nDartFileContent(_className, labels, locales, _otaEnabled);
+    var content = generateL10nDartFileContent(_className, labels, locales,
+        otaEnabled: _otaEnabled);
     var formattedContent = formatDartContent(content, 'l10n.dart');
 
     await updateL10nDartFile(formattedContent, _outputDir);
